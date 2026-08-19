@@ -9,8 +9,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.118.0",
     "execa": "^10.0.1",
+    "openai": "^7.5.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
