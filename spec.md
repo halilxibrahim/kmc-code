@@ -1,204 +1,189 @@
-# spec.md — Güvenlik & Güven Mimarisi Spesifikasyonu (v0.1)
+# spec.md — Security & Trust Architecture Specification (v0.1)
 
-> Bu doküman projenin **ana spesifikasyon dosyasıdır**. Amaç: kod yazmaya
-> başlamadan önce, agent'a (LLM tabanlı coding tool'umuza) vereceğimiz
-> yetkilerin ne gibi riskler taşıdığını sistematik olarak düşünmek —
-> Hixie'nin `llmdevsilo` tasarım notlarından ve Claude Code'un (Boris
-> Cherny) tasarım felsefesinden ilham alarak.
+> This document is the project's primary specification. Its purpose is to
+> reason systematically, before any code is written, about the risks
+> introduced by the permissions granted to the agent (this LLM-based
+> coding tool) — drawing on the design notes from Hixie's `llmdevsilo`
+> and on the design philosophy behind Claude Code (Boris Cherny).
 >
-> Mimari henüz netleşmedi (backend dili, sandbox teknolojisi, tek makine mi
-> çoklu istemci mi — hâlâ açık). Bu doküman o kararları vermeden önce
-> "hangi tehditlere karşı tasarlıyoruz" sorusunu netleştirmek için var.
+> The architecture is not yet finalized (backend language, sandbox
+> technology, single-machine vs. multi-client — all still open). This
+> document exists to clarify *what threats the system is being designed
+> against* before those decisions are made.
 
-## 0. Bu spec'in kapsamı ve iki referans zihniyet
+## 0. Scope and two guiding influences
 
-Bu doküman iki farklı, birbirini tamamlayan zihniyetten besleniyor:
+This document draws on two complementary mindsets:
 
-- **Hixie (spec-first disiplin):** Kod yazmadan önce, sistemin her
-  davranışını ve sınır durumunu (edge case) kağıt üzerinde düşünmek.
-  Güvenlik-kritik, sonradan değiştirmesi pahalı olan kararlar (sandbox
-  sınırları, güven sınırları) bu disiplinle ele alınmalı.
-- **Boris Cherny (minimalizm + dogfooding):** "Önce en basit şeyi yap",
-  bugünün varsayımlarına aşırı bağlı, gereksiz karmaşık bir sistem
-  tasarlamamak. Bu yüzden bu spec **sadece güven/güvenlik katmanını**
-  kapsıyor — UI, özellik listesi, teknoloji seçimi gibi konulara
-  girmiyor; onlar ayrı, daha yalın ve iteratif kararlar olarak
-  ilerleyecek.
+- **Spec-first discipline (Hixie):** every system behavior and edge case
+  is reasoned through on paper before code is written. Security-critical,
+  expensive-to-change decisions — sandbox boundaries, trust boundaries —
+  are handled with this discipline.
+- **Minimalism and dogfooding (Boris Cherny):** "do the simplest thing
+  first," avoid building unnecessary complexity around today's
+  assumptions. Accordingly, this document covers **only the trust and
+  security layer** — it does not address UI, feature scope, or technology
+  choices; those are separate, lighter-weight, iterative decisions.
 
-Aşağıdaki adımlar, önceki konuşmalarımızda çıkardığımız tehdit modelleme
-sürecinin (capability listesi → en kötü senaryo → güven sınırları →
-saldırgan hedefi → gerçek vakalar → kendi sistemine saldırı) bu projeye
-uygulanmış hali.
+The sections below apply a threat-modeling process (capability inventory
+→ worst case per capability → trust boundaries → attacker goals → known
+incidents → self-red-team checklist) to this specific project.
 
----
+## 1. Capabilities
 
-## 1. Yetenekler (Capabilities)
+Before the architecture is finalized, the capabilities the agent will
+likely be granted are listed here at a general level. This list must be
+updated whenever a new capability is added.
 
-Mimari netleşmeden önce, agent'a **muhtemelen** vereceğimiz yetenekleri
-genel düzeyde listeliyoruz. Her yeni yetenek eklendiğinde bu liste
-güncellenmeli.
-
-| # | Yetenek | Açıklama |
+| # | Capability | Description |
 |---|---|---|
-| C1 | Dosya okuma (Read) | Proje dizinindeki dosyaları okuyabilme |
-| C2 | Dosya yazma/düzenleme (Write/Edit) | Proje dizinine yazabilme, mevcut dosyaları değiştirebilme |
-| C3 | Komut çalıştırma (Bash/Exec) | Derleyici, test runner, paket yöneticisi gibi programları çalıştırabilme |
-| C4 | Ağ erişimi (Network) | Bağımlılık indirme, dış API çağrısı, web araması |
-| C5 | LLM sağlayıcısıyla iletişim | Prompt + kod içeriğinin Anthropic/OpenAI/yerel model API'sine gönderilmesi |
-| C6 | Oturum/geçmiş saklama | Konuşma geçmişi, dosya diff'leri gibi verinin diskte tutulması |
-| C7 | Kimlik bilgisi erişimi | API anahtarları, `.env` gibi sırlara erişim (gerekiyorsa) |
-| C8 | Çoklu istemci / uzaktan bağlantı *(ileride, opsiyonel)* | Harness'e başka bir cihazdan (telefon vb.) bağlanabilme — Silo'dan ilham |
+| C1 | File read | Read files within the project directory |
+| C2 | File write / edit | Write to the project directory, modify existing files |
+| C3 | Command execution (Bash/Exec) | Run programs such as compilers, test runners, package managers |
+| C4 | Network access | Download dependencies, call external APIs, perform web searches |
+| C5 | LLM provider communication | Prompt and code content sent to the Anthropic/OpenAI/local model API |
+| C6 | Session/history persistence | Conversation history, file diffs, etc. stored on disk |
+| C7 | Credential access | Access to API keys, `.env`-style secrets (where required) |
+| C8 | Multi-client / remote connection *(future, optional)* | Connecting to the harness from another device (e.g. phone) — inspired by Silo |
 
----
+## 2. Worst case per capability
 
-## 2. Her yetenek için "en kötü senaryo"
-
-| Yetenek | En kötü senaryo |
+| Capability | Worst case |
 |---|---|
-| C1 – Read | Proje dizinindeki bir sır dosyası (`.env`, ssh key, credential) LLM'in context'ine girer, konuşma geçmişinde veya LLM sağlayıcısına giden istekte istemeden taşınır. |
-| C2 – Write | Manipüle edilmiş (prompt injection içeren) bir bağımlılık veya dosya içeriği, LLM'i kandırıp proje içine sinsice backdoor/kötü amaçlı kod yazdırır — fark edilmeden commit'lenebilir. |
-| C3 – Bash/Exec | Keyfi kod çalıştırma = potansiyel tam sistem ele geçirme: disk silme, ters kabuk (reverse shell) açma, kaynakları tüketme (kripto madenciliği), diğer projelere/dosyalara sızma. |
-| C4 – Network | Prompt injection ile tetiklenen veri sızdırma (secrets'ı dış sunucuya gönderme), DNS tünelleme, typosquatting/dependency-confusion paketlerinin indirilmesi. |
-| C5 – LLM iletişimi | Gönderilen kod/prompt içeriğinin sağlayıcı tarafında loglanması veya trafiğin ele geçirilmesi (MITM) — özellikle kapalı kaynak, hassas bir proje için risk. |
-| C6 – Oturum saklama | Geçmişte kalan sırların diskte düz metin (plaintext) olarak saklanması, başka bir process/kullanıcı tarafından okunması. |
-| C7 – Kimlik bilgisi erişimi | Yanlış yapılandırmayla sırların sandbox'a mount edilip LLM'in görüş alanına girmesi. |
-| C8 – Çoklu istemci | Zayıf bir eşleştirme (pairing) mekanizması, yetkisiz bir cihazın harness'e bağlanıp tam kontrolü ele geçirmesine izin verir. |
+| C1 – Read | A secret file in the project directory (`.env`, an SSH key, a credential) enters the LLM's context and is unintentionally carried into conversation history or the request sent to the LLM provider. |
+| C2 – Write | A manipulated dependency or file (containing a prompt injection) tricks the LLM into quietly writing a backdoor into the project — which could be committed unnoticed. |
+| C3 – Bash/Exec | Arbitrary code execution — potential full system compromise: disk wipe, reverse shell, resource exhaustion (cryptomining), reaching into other projects/files. |
+| C4 – Network | Data exfiltration triggered by prompt injection (POSTing secrets to an external server), DNS tunneling, installing typosquatted/dependency-confusion packages. |
+| C5 – LLM communication | Prompt/code content logged on the provider side, or traffic intercepted (MITM) — a particular concern for closed-source, sensitive projects. |
+| C6 – Session persistence | Secrets left over from history stored in plaintext on disk, readable by another process/user. |
+| C7 – Credential access | Misconfiguration mounts secrets into the sandbox, making them visible to the LLM. |
+| C8 – Multi-client | A weak pairing mechanism lets an unauthorized device connect to the harness and gain full control. |
 
----
-
-## 3. Güven sınırları (Trust Boundaries)
+## 3. Trust boundaries
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Kullanıcının host makinesi              (EN YÜKSEK GÜVEN)   │
+│  User's host machine                       (HIGHEST TRUST)   │
 │                                                               │
 │   ┌───────────────────────────────────────────────────┐     │
-│   │  Harness / backend süreç                            │     │
-│   │  - LLM isteklerini yönetir                          │     │
-│   │  - sandbox'ı kurar/yıkar                            │     │
-│   │  - sır/kimlik bilgisi burada tutulur (sandbox'ta değil) │
+│   │  Harness / backend process                          │     │
+│   │  - manages LLM requests                             │     │
+│   │  - sets up / tears down the sandbox                 │     │
+│   │  - holds secrets/credentials here (never in sandbox)│     │
 │   │                                                      │     │
 │   │   ┌─────────────────────────────────────────┐      │     │
-│   │   │  Sandbox (agent'ın fiilen çalıştığı yer)  │      │     │
-│   │   │  - "varsayılan düşman" olarak ele alınır  │      │     │
-│   │   │  - C1, C2, C3 burada gerçekleşir          │      │     │
-│   │   │  - dışarıyla tek bağlantısı: proxy (C4)   │      │     │
+│   │   │  Sandbox (where the agent actually runs)  │      │     │
+│   │   │  - treated as "adversarial by default"    │      │     │
+│   │   │  - C1, C2, C3 happen here                 │      │     │
+│   │   │  - only outside connection: proxy (C4)    │      │     │
 │   │   └─────────────────────────────────────────┘      │     │
 │   └───────────────────────────────────────────────────┘     │
 └───────────────┬───────────────────────────┬─────────────────┘
-                │ (C5: API çağrısı)          │ (C4: proxy üzerinden,
-                ▼                            │  allow-list'li)
+                │ (C5: API call)             │ (C4: via proxy,
+                ▼                            │  allow-listed)
       ┌──────────────────┐                   ▼
-      │ LLM sağlayıcısı    │        ┌──────────────────────┐
-      │ (Anthropic/OpenAI/ │        │ İnternet / 3. parti    │
-      │  yerel model)      │        │ bağımlılıklar          │
-      │ AYRI GÜVEN SINIRI  │        │ GÜVENİLMEZ             │
-      └──────────────────┘        └──────────────────────┘
+      │ LLM provider       │        ┌──────────────────────┐
+      │ (Anthropic/OpenAI/ │        │ Internet / third-party │
+      │  local model)       │        │ dependencies           │
+      │ SEPARATE TRUST      │        │ UNTRUSTED              │
+      │ BOUNDARY            │        └──────────────────────┘
+      └──────────────────┘
 
-  (İleride, C8 aktifse: ayrı bir güven sınırı olarak "uzak istemciler"
-   — telefon/başka makine — eklenecek; pairing + asimetrik anahtarla
-   kimlik doğrulaması gerektirir.)
+  (Future, if C8 is enabled: "remote clients" — phone/other machine —
+   become a separate trust boundary, requiring pairing + asymmetric-key
+   authentication.)
 ```
 
-**Kural:** Sandbox içinden host'a veya host'tan LLM sağlayıcısına giden
-her veri akışı, bu sınırı **bilinçli ve kontrollü** şekilde geçmeli — hiçbir
-akış "varsayılan olarak açık" olmamalı.
+**Rule:** every data flow crossing from the sandbox to the host, or from
+the host to the LLM provider, must be **deliberate and controlled** — no
+flow should be "open by default."
 
----
+## 4. The attacker's goal — not just the mechanism
 
-## 4. Saldırganın hedefi — sadece mekanizma değil, amaç
+When designing a security control, asking "what is the attacker's actual
+goal" produces more durable protection than asking "what mechanism am I
+blocking" — mechanisms change, goals don't. Likely attacker goals:
 
-Bir güvenlik önlemi tasarlarken "hangi mekanizmayı engelliyorum" değil,
-"saldırganın asıl amacı ne" sorusunu sormak daha kalıcı bir koruma sağlar
-— çünkü mekanizmalar değişir, amaçlar değişmez. Olası saldırgan hedefleri:
+1. **Exfiltration:** extracting secrets, source code, or user data.
+   *(The most likely and most dangerous goal — C1, C4, C5, C6, C7 can all
+   serve it.)*
+2. **Persistence / backdoor:** quietly inserting code into a CI/CD
+   pipeline, git hooks, or dependency files — maintaining undetected
+   access over time. *(C2, C3 serve this goal.)*
+3. **Sabotage:** wiping a disk, corrupting a repository, causing data
+   loss. *(C2, C3.)*
+4. **Resource abuse:** draining API quota/budget, using the sandbox for
+   cryptomining. *(C3, C4.)*
+5. **Lateral movement:** pivoting from the sandbox to the host, or (in a
+   multi-client architecture) from one user to another. *(C3, C8.)*
 
-1. **Sızdırma (exfiltration):** Sırları, kaynak kodu, kullanıcı verisini
-   dışarı çıkarmak. *(En olası ve en tehlikeli hedef — C1, C4, C5, C6, C7
-   bu hedefe hizmet edebilir.)*
-2. **Kalıcılık / arka kapı (persistence):** CI/CD pipeline'ına, git
-   hook'larına, bağımlılık dosyalarına sinsice kod eklemek — tespit
-   edilmeden uzun süre erişim sağlamak. *(C2, C3 bu hedefe hizmet eder.)*
-3. **Yıkım (sabotage):** Diski silmek, repoyu bozmak, veri kaybına yol
-   açmak. *(C2, C3.)*
-4. **Kaynak istismarı (resource abuse):** API kotasını/parayı tüketmek,
-   sandbox'ı kripto madenciliği için kullanmak. *(C3, C4.)*
-5. **Yanal hareket (lateral movement):** Sandbox'tan host'a, ya da (çoklu
-   istemci mimarisinde) bir kullanıcıdan diğerine sıçramak. *(C3, C8.)*
+The question to ask for every new feature/capability: **"Which of the
+five goals above could this serve an attacker?"**
 
-Her yeni özellik/yetenek eklerken sorulacak soru: **"Bu, saldırganın
-yukarıdaki beş hedeften hangisine hizmet edebilir?"**
+## 5. Known incidents (external references)
 
----
+These are not arbitrary — they represent well-known failure classes. See
+the sources for full detail; only the mapping to the goals above is
+noted here:
 
-## 5. Gerçek vakalar (referans — literatürden)
+- **Coding agents unintentionally exfiltrating secrets from environment
+  variables/files** — an example of Goal 1 (exfiltration).
+- **A coding agent wiping a disk outside the user's intent** — an example
+  of Goal 3 (sabotage); typically caused by an over-broad or
+  misinterpreted command.
+- **The "lethal trifecta" (Simon Willison):** when an agent simultaneously
+  (a) has access to private data, (b) processes untrusted content, and
+  (c) can communicate externally, exfiltration risk becomes nearly
+  unavoidable. Source: <https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/>
+- **OWASP GenAI/LLM Top 10 (2026):** prompt injection and "excessive
+  agency" (granting an agent more capability than it needs) rank at the
+  top. Source: <https://genai.owasp.org/>
+- **llmdevsilo design notes:** a concrete implementation of the
+  sandbox + proxy + allow-list approach that inspired this project.
 
-Bunlar rastgele değil, bilinen başarısızlık sınıflarının örnekleri.
-Ayrıntılar için kaynaklara bakınız, burada sadece hangi hedefe karşılık
-geldiği not edilmiştir:
+## 6. Attacking our own system — documented, not performed
 
-- **Coding agent'ların ortam değişkenlerindeki/dosyalardaki sırları
-  istemeden dışarı sızdırması** — Hedef 1 (sızdırma) örneği.
-- **Bir coding agent'ın kullanıcı isteği dışı bir diski silmesi** — Hedef
-  3 (yıkım) örneği; genelde aşırı/yanlış yorumlanmış bir komuttan
-  kaynaklanır.
-- **"Lethal trifecta" (Simon Willison):** Bir agent aynı anda (a) özel
-  veriye erişebiliyor, (b) güvenilmeyen içerik işliyor, (c) dışarıyla
-  iletişim kurabiliyorsa, sızdırma riski neredeyse kaçınılmaz hale gelir.
-  Kaynak: <https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/>
-- **OWASP GenAI/LLM Top 10 (2026):** Prompt injection ve "excessive
-  agency" (agent'a gereğinden fazla yetki verilmesi) en üst sıralarda.
-  Kaynak: <https://genai.owasp.org/>
-- **llmdevsilo tasarım notları** (bu repodaki `docs/ilham/` altında daha
-  önce özetlenmişti — bkz. git geçmişi): sandbox + proxy + allow-list
-  yaklaşımının somut bir uygulaması.
+> **Note:** this section does **not** describe an attack that was
+> actually carried out. Because the architecture (sandbox technology,
+> backend, etc.) is not yet chosen, there is no running system to attack.
+> The list below is a **self-red-team checklist** — a living document to
+> be used once the architecture is finalized and a first implementation
+> exists; for now it records the questions that must not be forgotten.
 
----
+Questions to ask once the sandbox becomes operational:
 
-## 6. Kendi sistemimize saldırı — DOKÜMANTASYON, UYGULAMA DEĞİL
+- [ ] Can a symlink or path-traversal trick, starting from the directory
+      given to the sandbox, reach another file on the host?
+- [ ] Even with network access disabled, can data still be exfiltrated
+      via DNS queries (DNS tunneling)?
+- [ ] Do any conversation/operation logs store secrets in plaintext
+      anywhere?
+- [ ] (If C8 is enabled) Can the pairing code be brute-forced — how many
+      attempts, how long would it take?
+- [ ] Is there any control against dependency-confusion / typosquatting
+      attacks during dependency installation?
+- [ ] Can the sandbox process consume unlimited host CPU/memory/disk
+      (resource exhaustion / DoS)?
+- [ ] In any given request to the LLM, has a secret that should *not* be
+      in the sandbox accidentally entered the context (e.g. a wrong
+      mount, a wrong env var)?
 
-> **Önemli not:** Bu bölümde **gerçek bir saldırı gerçekleştirmiyoruz.**
-> Mimari (sandbox teknolojisi, backend, vb.) henüz seçilmediği için
-> saldırılacak çalışan bir sistem yok. Aşağıdaki liste, mimari
-> netleştiğinde ve ilk implementasyon yapıldığında kullanılacak bir
-> **self red-team soru listesi / checklist**'tir — canlı bir belge olarak
-> güncellenecek, şimdilik sadece hangi soruları sormamız gerektiğini not
-> ediyoruz.
+This list will serve as the starting point when a real security review /
+penetration test is performed — for now it is recorded simply as
+"questions we must not forget."
 
-İleride, sandbox çalışır hale geldiğinde sorulacak sorular:
+## 7. Open questions / next steps
 
-- [ ] Sandbox'a verilen dizinden symlink/path-traversal ile host'taki
-      başka bir dosyaya erişilebiliyor mu?
-- [ ] Ağ erişimi kapalıyken bile DNS sorguları üzerinden veri
-      sızdırılabiliyor mu (DNS tunneling)?
-- [ ] Konuşma/işlem logları herhangi bir yerde sırları düz metin olarak
-      tutuyor mu?
-- [ ] (C8 aktifse) Eşleştirme (pairing) kodu kaba kuvvetle (brute-force)
-      denenebilir mi, kod ne kadar sürede/deneme ile kırılabilir?
-- [ ] Bağımlılık indirme sırasında dependency-confusion / typosquatting
-      saldırılarına karşı bir kontrol var mı?
-- [ ] Sandbox process'i, host'un CPU/bellek/disk kaynaklarını sınırsız
-      tüketebiliyor mu (resource exhaustion / DoS)?
-- [ ] LLM'e giden her istekte, o an sandbox'ta *olmaması gereken* bir sır
-      yanlışlıkla context'e girmiş mi (ör. yanlış mount, yanlış env var)?
+This spec deliberately does **not** answer the following (per Boris
+Cherny's "do the simplest thing first" principle — it is still early):
 
-Bu liste, gerçek bir güvenlik incelemesi/pentest yapılacağı zaman
-başlangıç noktası olarak kullanılacak — şu an için sadece "unutmamamız
-gereken sorular" olarak kayıt altına alınmıştır.
+- What sandbox technology will be used? (Docker, gVisor, Firecracker, or
+  something simpler — plain process isolation?)
+- What language will the backend be written in?
+- Single machine, or a harness/UI split with multiple clients, as in
+  Silo?
+- Network policy: fully closed by default, or an allow-list defined from
+  the start?
 
----
-
-## 7. Açık sorular / sonraki adımlar
-
-Bu spec bilinçli olarak şu kararları **vermiyor** (Boris Cherny'nin "önce
-en basit şeyi yap" ilkesi gereği, henüz erken):
-
-- Sandbox teknolojisi ne olacak? (Docker, gVisor, Firecracker, ya da daha
-  basit bir process-isolation mı?)
-- Backend hangi dilde yazılacak?
-- Tek makine mi, yoksa Silo'daki gibi harness/UI ayrımı + çoklu istemci
-  mi olacak?
-- Ağ politikası: varsayılan tamamen kapalı mı, yoksa baştan bir
-  allow-list mi tanımlanacak?
-
-Bu sorular, mimari netleştikçe bu dosyaya eklenecek yeni bölümlerde
-cevaplanacak.
+These questions will be answered in new sections added to this document
+as the architecture becomes clearer.
