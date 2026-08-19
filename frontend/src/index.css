@@ -1,38 +1,32 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
-  --background: #ffffff;
-  --foreground: #0a0a0a;
-  --primary: #171717;
-  --primary-foreground: #fafafa;
-  --accent: #f4f4f5;
-  --accent-foreground: #171717;
-  --input: #e4e4e7;
-  --ring: #a1a1aa;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #fafafa;
-    --primary: #fafafa;
-    --primary-foreground: #171717;
-    --accent: #262626;
-    --accent-foreground: #fafafa;
-    --input: #3f3f46;
-    --ring: #52525b;
-  }
+  --background: #08090b;
+  --panel: #0e1013;
+  --panel-border: #1f2329;
+  --foreground: #d7dbe0;
+  --muted: #6b7280;
+  --accent: #33e0c0;
+  --accent-dim: rgba(51, 224, 192, 0.12);
+  --warn: #f5a623;
+  --danger: #ef4444;
+  --input: #1f2329;
+  --ring: #33e0c0;
 }
 
 @theme inline {
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-panel-border: var(--panel-border);
   --color-foreground: var(--foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
   --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-dim: var(--accent-dim);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
   --color-input: var(--input);
   --color-ring: var(--ring);
 }
@@ -40,6 +34,25 @@
 body {
   margin: 0;
   min-height: 100svh;
-  background: var(--background);
+  background:
+    linear-gradient(var(--panel-border) 1px, transparent 1px) 0 0 / 100% 32px,
+    var(--background);
   color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 0;
 }

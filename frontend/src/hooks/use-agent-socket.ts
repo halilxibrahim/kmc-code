@@ -5,6 +5,12 @@ export interface AgentEvent {
   [key: string]: unknown
 }
 
+export interface LogEntry {
+  id: number
+  time: string
+  event: AgentEvent
+}
+
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 const BACKEND_WS_URL = import.meta.env.VITE_BACKEND_WS_URL ?? 'ws://localhost:8787'
@@ -13,8 +19,9 @@ const BACKEND_WS_URL = import.meta.env.VITE_BACKEND_WS_URL ?? 'ws://localhost:87
 // geçip geçmeyeceğimize gerçek kullanımdan sonra karar veriyoruz (spec.md).
 export function useAgentSocket() {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
-  const [events, setEvents] = useState<AgentEvent[]>([])
+  const [log, setLog] = useState<LogEntry[]>([])
   const socketRef = useRef<WebSocket | null>(null)
+  const nextId = useRef(0)
 
   useEffect(() => {
     const socket = new WebSocket(BACKEND_WS_URL)
@@ -25,7 +32,12 @@ export function useAgentSocket() {
     socket.addEventListener('message', (event) => {
       try {
         const parsed = JSON.parse(event.data) as AgentEvent
-        setEvents((prev) => [...prev, parsed])
+        const entry: LogEntry = {
+          id: nextId.current++,
+          time: new Date().toLocaleTimeString('tr-TR', { hour12: false }),
+          event: parsed,
+        }
+        setLog((prev) => [...prev, entry])
       } catch {
         // JSON olmayan mesajları görmezden gel (v0)
       }
@@ -38,5 +50,5 @@ export function useAgentSocket() {
     socketRef.current?.send(JSON.stringify(message))
   }, [])
 
-  return { status, events, send }
+  return { status, log, send }
 }
