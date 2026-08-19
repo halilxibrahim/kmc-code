@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { WebSocketServer } from 'ws'
 import { runAgentTurn } from './agent-loop.js'
 
