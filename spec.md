@@ -302,37 +302,10 @@ argument of the first.
   that is not on the list is not flagged. This is command-level policy,
   not network isolation.
 
-### Two hosts, one classifier
-
-The classifier reports facts; each host that uses it owns its policy.
-
-- **Our own agent** has no human-confirmation flow yet, so it uses the
-  Level 0 policy above: anything risky is blocked.
-- **Claude Code**, through a `PreToolUse` hook
-  (`backend/src/claude-code-hook.ts`), does have a permission prompt. There,
-  outside-the-project paths and privilege escalation are **denied**, while
-  irreversible, network and unknown-scope calls become **ask**, because
-  `rm` or `npm install` are routine in real projects. Everything else gets
-  no opinion, so Claude Code's own rules apply unchanged.
-
-The hook never returns `allow`: that would bypass Claude Code's own
-permission settings. A guard should only ever add friction. On its own
-bugs (for example, unparseable input) it returns `ask` — neither
-silently allowing nor locking the user out.
-
-For the hook, the workspace boundary is the project Claude Code runs in
-(`CLAUDE_PROJECT_DIR`), relative paths resolve from the actual current
-directory, and Claude Code's own scratchpad directory counts as inside.
-Its main value for this project is dogfooding: it exposes the classifier
-to real daily work, and those decisions feed the same log as the agent's.
-
 ### Data flywheel
 
-Every decision — from our agent and from the Claude Code hook, tagged by
-`source` — is appended to `backend/logs/tool-decisions.jsonl` with the
-task, the plan, the tool, its input and the verdict. (The hook does not
-receive the task or plan directly; it could read them from Claude Code's
-transcript, which is a Level 1 prerequisite.) This file is
+Every decision is appended to `backend/logs/tool-decisions.jsonl` with
+the task, the plan, the tool, its input and the verdict. This file is
 the future training set for Level 2: today's rules become the labeler,
 and human review corrects them. The log is gitignored because task,
 plan and command text can contain sensitive data (§1, C6).

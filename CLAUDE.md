@@ -55,15 +55,7 @@ agent mimarisini bu proje üzerinden öğrenerek ilerliyor. Yaklaşım: küçük
 - Manuel testte bulunan `run_command` ile workspace dışına çıkma açığı
   (`cat ../../backend/.env`) sınıflandırıcıyla kapatıldı; tam bu komutlar
   için regresyon testi var. Symlink kaçışı hâlâ açık (spec.md §6).
-- `cd backend && npm test` sınıflandırıcı ve hook politikası testlerini
-  çalıştırır.
-- Aynı sınıflandırıcı bir **Claude Code PreToolUse hook'u** olarak da
-  çalışıyor (`backend/src/claude-code-hook.ts`). Amaç ürünü değiştirmek
-  değil, guard'ı sahibinin günlük Claude Code kullanımında dogfood etmek.
-  Politika farklı: proje dışı ve `sudo` → deny; geri alınamaz, ağ ve
-  bilinmeyen → ask; gerisi sessiz. Hook asla `allow` demez (Claude Code'un
-  kendi izinlerini atlatmamak için). Kurulum: `npm run build` sonrası
-  `node dist/claude-code-hook.js --print-config` (README).
+- `cd backend && npm test` sınıflandırıcı testlerini çalıştırır.
 - Her karar `backend/logs/tool-decisions.jsonl`'a yazılıyor (gitignored,
   hassas metin içerebilir) — Seviye 2 modelin gelecekteki eğitim verisi.
 - **Konuşma hafızası yok** — her `user_message`, `agent-loop.ts` içinde

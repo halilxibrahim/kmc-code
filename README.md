@@ -29,9 +29,6 @@ as far as real usage justifies.
   can replace it later ([`spec.md` §8](./spec.md#8-pre-execution-action-classifier))
 - Every classifier decision is logged as JSONL — the future training set
   for that fine-tuned model
-- The same classifier also works as a **Claude Code `PreToolUse` hook**,
-  so it can guard real day-to-day work, not just this agent
-  ([setup below](#use-the-guard-with-claude-code))
 - LLM calls go through an OpenAI-compatible client to
   [OpenRouter](https://openrouter.ai), defaulting to `qwen/qwen3.8-max` —
   swappable via one environment variable, not locked to a single provider
@@ -88,40 +85,13 @@ cd backend
 cp .env.example .env   # fill in OPENROUTER_API_KEY
 npm install
 npm run dev             # ws://localhost:8787
-npm test                # classifier + hook policy test suite
+npm test                # classifier test suite
 
 # Frontend (separate terminal)
 cd frontend
 npm install
 npm run dev              # http://localhost:5173
 ```
-
-## Use the guard with Claude Code
-
-The classifier can sit in front of [Claude Code](https://code.claude.com)
-as a `PreToolUse` hook: before Claude Code runs a `Bash`, `Write`, `Edit`
-or `Read` call, the hook classifies it and can block it or ask you first.
-
-```bash
-cd backend
-npm install && npm run build
-node dist/claude-code-hook.js --print-config
-```
-
-Paste the printed JSON into a project's `.claude/settings.json` (only
-that project) or `~/.claude/settings.json` (every project). The project
-Claude Code is working in becomes the workspace boundary.
-
-| Situation | Hook decision |
-|---|---|
-| Path outside the project, privilege escalation (`sudo`) | **deny** |
-| Irreversible (`rm`, `git push --force`), network (`npm install`, `curl`), or something it cannot see into (`$VAR`, `bash -c`) | **ask** — Claude Code shows its permission prompt with the reason |
-| Everything else | no opinion — Claude Code's own permission rules apply unchanged |
-
-The hook never answers `allow`, so it can only add friction to Claude
-Code's own permission system, never bypass it. Decisions are logged to
-`backend/logs/tool-decisions.jsonl` (never into the guarded project).
-Same limits as in our own agent apply — see [`spec.md` §8](./spec.md#8-pre-execution-action-classifier).
 
 ## Roadmap / target architecture
 
