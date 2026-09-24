@@ -10,6 +10,7 @@ const EVENT_STYLE: Record<string, { label: string; className: string }> = {
   tool_call: { label: 'CALL', className: 'text-warn border-warn/40' },
   tool_result: { label: 'OK', className: 'text-accent border-accent/40' },
   tool_error: { label: 'ERR', className: 'text-danger border-danger/40' },
+  tool_blocked: { label: 'BLOCK', className: 'text-danger border-danger/40 bg-danger/10' },
   turn_end: { label: 'END', className: 'text-muted border-panel-border' },
   error: { label: 'ERR', className: 'text-danger border-danger/40' },
 }
@@ -94,6 +95,10 @@ function App() {
           <div>
             <p className="mb-1 text-[10px] tracking-widest text-muted">SANDBOX</p>
             <p className="text-warn">NONE — v0</p>
+          </div>
+          <div>
+            <p className="mb-1 text-[10px] tracking-widest text-muted">GUARD</p>
+            <p className="text-foreground">rules-v0 classifier</p>
           </div>
           <div>
             <p className="mb-1 text-[10px] tracking-widest text-muted">EVENTS</p>

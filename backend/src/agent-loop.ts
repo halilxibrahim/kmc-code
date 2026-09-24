@@ -1,4 +1,6 @@
 import OpenAI from 'openai'
+import { classifyToolCall } from './classifier.js'
+import { logDecision } from './decision-log.js'
 import { executeTool, toolDefinitions } from './tools.js'
 
 // OpenRouter, OpenAI ile aynı Chat Completions formatını kullanıyor —
@@ -18,7 +20,13 @@ const MODEL = process.env.MODEL ?? 'qwen/qwen3.8-max'
 
 const SYSTEM_PROMPT = `Sen bir coding agent'sın. Kullanıcının verdiği görevi
 tamamlamak için read_file, write_file ve run_command tool'larını
-kullanabilirsin. Her adımda ne yaptığını kısaca açıkla.`
+kullanabilirsin. Her adımda ne yaptığını kısaca açıkla.
+
+Her tool çağrısı çalışmadan önce bir güvenlik sınıflandırıcısından geçer.
+Workspace dışına çıkan, geri alınamaz, ağ erişimi gerektiren ya da yetki
+yükselten çağrılar engellenir. Engellenirsen nedenini oku, aynı çağrıyı
+tekrar deneme; workspace içinde kalan bir alternatif bul ya da kullanıcıya
+neden yapamadığını açıkla.`
 
 export type AgentEventEmitter = (event: Record<string, unknown>) => void
 
@@ -68,7 +76,18 @@ export async function runAgentTurn(userMessage: string, emit: AgentEventEmitter)
         // model geçersiz JSON üretti — boş input ile devam et, tool kendi hata versin
       }
 
-      emit({ type: 'tool_call', name, input })
+      const ctx = { task: userMessage, plan: message.content ?? '', tool: name, input }
+      const verdict = classifyToolCall(ctx)
+      void logDecision(ctx, verdict)
+
+      emit({ type: 'tool_call', name, input, verdict })
+
+      if (verdict.decision === 'block') {
+        const content = `Engellendi (pre-execution classifier, ${verdict.classifier}): ${verdict.reasons.join('; ')}`
+        emit({ type: 'tool_blocked', name, reasons: verdict.reasons })
+        messages.push({ role: 'tool', tool_call_id: toolCall.id, content })
+        continue
+      }
 
       let content: string
       let isError = false

@@ -1,25 +1,12 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { execa } from 'execa'
 import type OpenAI from 'openai'
+import { WORKSPACE_DIR, resolveInWorkspace } from './workspace.js'
 
-// v0 — SANDBOX YOK. spec.md'deki C1/C2/C3 riskleri burada henüz
-// hiçbir şekilde azaltılmıyor. Sadece WORKSPACE_DIR altındaki
-// dosyalarla sınırlamaya çalışan basit bir path-guard var; bu
-// gerçek bir güvenlik sınırı DEĞİL, sadece yanlışlıkla dizin dışına
-// çıkmayı zorlaştıran bir önlem. Toy/güvendiğin projeler dışında
-// kullanma.
-const WORKSPACE_DIR = path.resolve(process.env.WORKSPACE_DIR ?? './workspace')
-
-function resolveInWorkspace(relativePath: string): string {
-  const resolved = path.resolve(WORKSPACE_DIR, relativePath)
-  if (!resolved.startsWith(WORKSPACE_DIR)) {
-    throw new Error(
-      `Reddedildi: '${relativePath}' workspace dizininin dışına çıkıyor.`,
-    )
-  }
-  return resolved
-}
+// v0 — SANDBOX YOK. Her tool çağrısı önce classifier.ts'ten (rules-v0)
+// geçiyor; buradaki path-guard ikinci bir savunma katmanı. İkisi de
+// gerçek bir güvenlik sınırı DEĞİL (bkz. spec.md §8) — toy/güvendiğin
+// projeler dışında kullanma.
 
 export const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -90,5 +77,3 @@ export async function executeTool(name: string, input: Record<string, unknown>) 
       throw new Error(`Bilinmeyen tool: ${name}`)
   }
 }
-
-export { WORKSPACE_DIR }

@@ -8,18 +8,27 @@ This is a personal learning project, not a product. It intentionally
 starts small (see [Design Philosophy](#design-philosophy)) and grows only
 as far as real usage justifies.
 
-> **Security status: v0, no sandbox.** The agent can read/write files and
-> run shell commands inside `backend/workspace/` only, guarded by a
-> best-effort path check — not a real security boundary. Full threat
-> model, capabilities, and worst-case scenarios are documented in
-> [`spec.md`](./spec.md). Do not point this at anything you don't fully
-> trust.
+> **Security status: v0, no sandbox.** Every tool call passes a
+> rule-based pre-execution classifier that blocks anything leaving
+> `backend/workspace/`, anything irreversible, privilege escalation and
+> network access. That is a guardrail, not a security boundary: it sees
+> the command line, not what programs do. Full threat model and the
+> classifier's known limitations are in [`spec.md`](./spec.md). Do not
+> point this at anything you don't fully trust.
 
 ## What it does today
 
 - Chat with an LLM agent over a WebSocket connection
 - The agent can call three tools: `read_file`, `write_file`, `run_command`
 - All tool calls are scoped to a single workspace directory
+- **Pre-execution classifier** — inspired by TypeSafe AI's
+  [Jev](https://www.firecrawl.dev/blog/what-is-jev): before any tool
+  runs, it answers four questions (irreversible? off-task? mutates?
+  what scope?) and blocks the call if needed. Level 0 is plain rules;
+  the interface is designed so a small LLM judge or a fine-tuned model
+  can replace it later ([`spec.md` §8](./spec.md#8-pre-execution-action-classifier))
+- Every classifier decision is logged as JSONL — the future training set
+  for that fine-tuned model
 - LLM calls go through an OpenAI-compatible client to
   [OpenRouter](https://openrouter.ai), defaulting to `qwen/qwen3.8-max` —
   swappable via one environment variable, not locked to a single provider
@@ -37,16 +46,21 @@ flowchart LR
     subgraph Server["backend — Node.js + TypeScript"]
         WS["WebSocket server"]
         Loop["Agent loop\n(tool-use, single turn, no memory)"]
+        Guard{"Pre-execution classifier\n(rules-v0)"}
         Tools["Tools\nread_file · write_file · run_command"]
+        Log[("decision log\n(JSONL)")]
     end
 
-    Workspace[("backend/workspace/\n(no sandbox — path-guard only)")]
+    Workspace[("backend/workspace/\n(no sandbox — guardrails only)")]
     Provider[["OpenRouter\n(qwen/qwen3.8-max)"]]
 
     UI <-- "ws://localhost:8787" --> WS
     WS --> Loop
     Loop <-- "OpenAI-compatible API" --> Provider
-    Loop --> Tools
+    Loop -- "task + plan + tool call" --> Guard
+    Guard -- "allow" --> Tools
+    Guard -. "block + reasons" .-> Loop
+    Guard --> Log
     Tools --> Workspace
 ```
 
@@ -71,6 +85,7 @@ cd backend
 cp .env.example .env   # fill in OPENROUTER_API_KEY
 npm install
 npm run dev             # ws://localhost:8787
+npm test                # classifier test suite
 
 # Frontend (separate terminal)
 cd frontend

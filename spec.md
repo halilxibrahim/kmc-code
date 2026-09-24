@@ -141,23 +141,26 @@ noted here:
 - **llmdevsilo design notes:** a concrete implementation of the
   sandbox + proxy + allow-list approach that inspired this project.
 
-## 6. Attacking our own system — documented, not performed
+## 6. Attacking our own system — self-red-team checklist
 
-> **Note:** this section does **not** describe an attack that was
-> actually carried out. Because the architecture (sandbox technology,
-> backend, etc.) is not yet chosen, there is no running system to attack.
-> The list below is a **self-red-team checklist** — a living document to
-> be used once the architecture is finalized and a first implementation
-> exists; for now it records the questions that must not be forgotten.
+> **Note:** this list was written before any system existed, as the
+> questions that must not be forgotten. Items are checked off as the
+> v0 agent is actually tested against them. It is not a substitute for a
+> real security review.
 
-Questions to ask once the sandbox becomes operational:
-
-- [ ] Can a symlink or path-traversal trick, starting from the directory
-      given to the sandbox, reach another file on the host?
+- [x] **Path traversal via `run_command`** — *confirmed in manual testing
+      of v0:* the path-guard only covered `read_file`/`write_file`, so the
+      agent could run `cat ../../backend/.env` and read a real secret.
+      Now blocked by the Level 0 classifier (§8), with a regression test
+      for the exact commands observed.
+- [ ] **Symlink escape** — still open. Neither the classifier nor the
+      path-guard resolves symlinks: a symlink inside the workspace that
+      points outside it would pass both.
 - [ ] Even with network access disabled, can data still be exfiltrated
       via DNS queries (DNS tunneling)?
 - [ ] Do any conversation/operation logs store secrets in plaintext
-      anywhere?
+      anywhere? *(The classifier's decision log — §8 — stores task, plan
+      and command text locally; it is gitignored but not redacted.)*
 - [ ] (If C8 is enabled) Can the pairing code be brute-forced — how many
       attempts, how long would it take?
 - [ ] Is there any control against dependency-confusion / typosquatting
@@ -183,7 +186,133 @@ Cherny's "do the simplest thing first" principle — it is still early):
 - Single machine, or a harness/UI split with multiple clients, as in
   Silo?
 - Network policy: fully closed by default, or an allow-list defined from
-  the start?
+  the start? *(Interim answer at the command level: the §8 classifier
+  blocks known network commands unless `AGENT_ALLOW_NETWORK=true`. This
+  is not network isolation — see §8 limitations.)*
+- Human confirmation: irreversible actions are currently blocked
+  outright. Should they instead pause and ask the user (turning the
+  classifier's `block` into `ask`)?
 
 These questions will be answered in new sections added to this document
 as the architecture becomes clearer.
+
+## 8. Pre-execution action classifier
+
+### Why it exists
+
+Manual testing against the §6 checklist found a real gap in v0: the
+path-guard only protected `read_file` and `write_file`, while
+`run_command` could leave the workspace and read `backend/.env`. The
+real fix is a sandbox, but the sandbox technology is still an open
+question (§7). A classifier that inspects every tool call *before* it
+runs is a layer that can ship now and still earns its place once a
+sandbox exists.
+
+### Inspiration: Jev (TypeSafe AI)
+
+[Jev](https://www.firecrawl.dev/blog/what-is-jev) is the first model
+from TypeSafe AI. It does not generate text; it is a "System One" model
+built for fast, structured decisions — in their words, a smart `if`
+statement. In an agent harness, before each bash/write/edit call, the
+harness sends Jev the task, the agent's stated plan and the pending
+command, and gets four typed answers back in roughly 250 ms:
+
+1. Is this irreversible?
+2. Is it off-task?
+3. Does it mutate anything?
+4. What is its scope?
+
+Plain code then decides whether the call runs. This project adopts the
+same shape: the four questions, the same inputs, and a decision made by
+code rather than by the model being judged.
+
+This is deliberately *not* "the model watches itself." The judge is a
+separate, narrow component that never sees the conversation, so a
+prompt injection that fools the main model does not automatically fool
+the judge. Level 0 below has no model at all — it cannot be talked out
+of a decision.
+
+### Interface
+
+Every level implements the same contract, so the agent loop never
+changes when the engine behind it does:
+
+```ts
+classifyToolCall({ task, plan, tool, input }) → {
+  irreversible: boolean
+  offTask: boolean | null   // null = this level cannot judge intent
+  mutates: boolean
+  scope: 'workspace' | 'outside_workspace' | 'unknown'
+  network: boolean
+  privileged: boolean
+  decision: 'allow' | 'block'
+  reasons: string[]
+  classifier: string        // which engine made the call, e.g. 'rules-v0'
+}
+```
+
+### Roadmap: four levels
+
+| Level | Engine | Status | What it adds | Trade-off |
+|---|---|---|---|---|
+| 0 | Deterministic rules over a parsed command line | **Implemented** (`backend/src/classifier.ts`) | Instant, free, cannot be prompt-injected | Cannot judge `offTask`; only sees the command line |
+| 1 | A small, cheap LLM as a judge with structured (JSON) output | Planned | Can answer `offTask` using task + plan | Slower, costs per call, can itself be prompt-injected |
+| 2 | A small open model (sub-1B, or an encoder) fine-tuned on the decision log | Planned | Jev-like speed and cost, learns project-specific judgment | Needs a reviewed, labeled dataset |
+| 3 | Pretraining a model from scratch | Out of scope | — | Not feasible or necessary for a narrow classification task |
+
+### Level 0 policy
+
+| Condition | Decision |
+|---|---|
+| Scope is `outside_workspace` or `unknown` | block |
+| Privilege escalation (`sudo`, `su`, `doas`) | block |
+| Irreversible (`rm`, `dd`, `find -delete`, `git reset --hard`, `git push --force`, ...) | block — no human-confirmation flow exists yet |
+| Network (`curl`, `npm install`, `git pull`, `npx`, ...) | block, unless `AGENT_ALLOW_NETWORK=true` |
+| Anything else, including writes inside the workspace | allow |
+
+A blocked call is never executed. The model receives the reasons as the
+tool result, and its system prompt tells it not to retry the same call
+but to find an in-workspace alternative or explain why it cannot
+proceed. The frontend shows these as `BLOCK` events.
+
+Level 0 treats as `unknown` — and therefore blocks — anything whose
+effect it cannot see in the command line: variable expansion and
+command substitution (`$HOME`, `$(...)`, backticks), inline interpreter
+code (`bash -c`, `node -e`, `python -c`), and commands that run other
+commands (`eval`, `xargs`, `find -exec`). Two parser pitfalls are
+handled explicitly and covered by tests: the shell parser silently
+expands unknown variables to empty strings, and it treats newlines as
+whitespace, which would otherwise let a second command hide as an
+argument of the first.
+
+### Known limitations of Level 0
+
+- **It classifies the command line, not what programs do.** `npm test`,
+  `node script.js` or `bash build.sh` can read and write anything the
+  process can. A script the agent wrote itself via `write_file` bypasses
+  Level 0 entirely. Only a sandbox closes this.
+- **Symlinks are not resolved** (see §6).
+- **`offTask` is always `null`.** Intent needs context; rules have none.
+- **No deletion inside the workspace.** `rm` is blocked even on the
+  agent's own scratch files. This is deliberate until an "ask the user"
+  flow exists (§7).
+- **Overwrites via `write_file` count as reversible**, although the
+  previous content is lost.
+- **Network detection is list-based.** A program with network access
+  that is not on the list is not flagged. This is command-level policy,
+  not network isolation.
+
+### Data flywheel
+
+Every decision is appended to `backend/logs/tool-decisions.jsonl` with
+the task, the plan, the tool, its input and the verdict. This file is
+the future training set for Level 2: today's rules become the labeler,
+and human review corrects them. The log is gitignored because task,
+plan and command text can contain sensitive data (§1, C6).
+
+### Relation to the sandbox
+
+The classifier answers *"should this call run?"*. A sandbox answers
+*"how much damage can it do if that answer is wrong?"*. They complement
+each other; neither replaces the other, and the sandbox questions in §7
+remain open.

@@ -40,12 +40,24 @@ agent mimarisini bu proje üzerinden öğrenerek ilerliyor. Yaklaşım: küçük
 | Frontend state yönetimi | Basit bir `useAgentSocket` hook'u (RTK Query değil, henüz) | v0'da RTK/Zustand kararı bilinçli olarak ertelendi, gerçek kullanımdan sonra karar verilecek |
 | UI bileşenleri | Radix primitives + cva, elle kuruldu | shadcn CLI'ın `ui.shadcn.com` isteği bu ortamın ağ politikasınca engellenmişti; component.json hazır, `npx shadcn add` local'de sorunsuz çalışmalı |
 | Sandbox | **Yok** | v0 kapsamı dışında, bkz. spec.md §7 açık sorular |
+| Tool güvenliği | Pre-execution classifier, Seviye 0 = kurallar (`backend/src/classifier.ts`) | TypeSafe AI'ın Jev modelinden ilham: her tool çağrısından önce 4 soru (geri alınamaz mı / görev dışı mı / değiştiriyor mu / kapsamı ne). Arayüz sabit tutuldu, ileride küçük LLM hakem (Seviye 1) ve fine-tune edilmiş küçük model (Seviye 2) aynı arayüzün arkasına geçecek. Sandbox'ın yerini tutmaz, tamamlar. Detay: spec.md §8 |
 
 ## v0'ın kapsamı ve bilinen sınırlar
 
 - 3 tool: `read_file`, `write_file`, `run_command` — hepsi sadece
-  `backend/workspace/` altında, basit bir path-guard ile (gerçek bir
-  güvenlik sınırı DEĞİL, sadece yanlışlıkla dışına çıkmayı zorlaştırıyor)
+  `backend/workspace/` altında. Her çağrı önce rules-v0 sınıflandırıcısından
+  geçiyor (workspace dışı, geri alınamaz, yetki yükseltme ve ağ erişimi
+  engelleniyor; ağ `AGENT_ALLOW_NETWORK=true` ile açılabilir), ardından
+  `read_file`/`write_file`'da ikinci katman olarak path-guard var. İkisi
+  de gerçek bir güvenlik sınırı DEĞİL: sınıflandırıcı komut satırını
+  görüyor, programların ne yaptığını değil (`node script.js` her şeyi
+  yapabilir) — bunu sadece sandbox çözer.
+- Manuel testte bulunan `run_command` ile workspace dışına çıkma açığı
+  (`cat ../../backend/.env`) sınıflandırıcıyla kapatıldı; tam bu komutlar
+  için regresyon testi var. Symlink kaçışı hâlâ açık (spec.md §6).
+- `cd backend && npm test` sınıflandırıcı testlerini çalıştırır.
+- Her karar `backend/logs/tool-decisions.jsonl`'a yazılıyor (gitignored,
+  hassas metin içerebilir) — Seviye 2 modelin gelecekteki eğitim verisi.
 - **Konuşma hafızası yok** — her `user_message`, `agent-loop.ts` içinde
   sıfırdan bir mesaj listesiyle başlıyor, önceki turu hatırlamıyor. Bu şu
   an bilinen en büyük eksik.
@@ -53,11 +65,12 @@ agent mimarisini bu proje üzerinden öğrenerek ilerliyor. Yaklaşım: küçük
   verilen dosya adını okuyabiliyor, "projede ne var" diye bakamıyor
 - Backend, WebSocket üzerinden (`ws://localhost:8787`) frontend'e event
   stream'i gönderiyor (`connected`, `turn_start`, `assistant_text`,
-  `tool_call`, `tool_result`, `tool_error`, `turn_end`)
+  `tool_call` (sınıflandırıcı kararıyla birlikte), `tool_blocked`,
+  `tool_result`, `tool_error`, `turn_end`)
 
 ## Konuşulan ama henüz karara bağlanmayan seçenekler
 
-Sıradaki adım için üç yön konuşuldu, öncelik henüz netleşmedi:
+Sıradaki adım için birkaç yön konuşuldu, öncelik henüz netleşmedi:
 
 1. Konuşma hafızası eklemek (backend'de oturum/socket bazlı mesaj geçmişi
    saklamak) — muhtemelen en öncelikli
@@ -65,6 +78,14 @@ Sıradaki adım için üç yön konuşuldu, öncelik henüz netleşmedi:
 3. `WORKSPACE_DIR`'ı gerçek proje köküne çevirmek — **bilerek riskli**,
    sandbox olmadan gerçek koda yazma/komut çalıştırma yetkisi vermek
    demek, spec.md'nin C2/C3 riskini tam devreye sokuyor
+4. Sınıflandırıcının Seviye 1'i (küçük LLM hakem, `offTask`'ı
+   cevaplayabilir) ve geri alınamaz işlemler için "engelle" yerine
+   "kullanıcıya sor" akışı
+5. Task-first agent loop — T3 Code, Kiro ve Matt Pocock'un Wayfinder'ından
+   ilham: agent kod yazmadan önce plan/görev üretsin, kullanıcı onaylasın,
+   görev (ileride GitHub issue olarak) koddan önce var olsun. Sahibinin
+   kendi gözlemi: AI ile hızlı geliştirirken task'lar sonradan açılıyor.
+   Konuşuldu, spec.md'ye henüz eklenmedi.
 
 ## Notlar
 
