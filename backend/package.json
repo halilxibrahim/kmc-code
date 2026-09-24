@@ -1,13 +1,14 @@
 {
-  "name": "backend",
+  "name": "kmc-code",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/cli.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "node --import tsx --test src/*.test.ts"
+    "start": "node dist/cli.js",
+    "test": "node --import tsx --test src/*.test.ts",
+    "serve": "tsx watch src/cli.ts serve"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -22,5 +23,8 @@
     "@types/ws": "^8.18.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
+  },
+  "bin": {
+    "kmc": "dist/cli.js"
   }
 }

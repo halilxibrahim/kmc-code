@@ -35,6 +35,7 @@ agent mimarisini bu proje üzerinden öğrenerek ilerliyor. Yaklaşım: küçük
 
 | Karar | Ne seçildi | Neden |
 |---|---|---|
+| Ana arayüz | **CLI önce** (`kmc`): interaktif, tek görev (`kmc "görev"`) ve `kmc serve` modları | Sahibinin kararı: iskelet CLI olsun, web/masaüstü onun üstüne kurulsun. Claude Code ve Codex ile aynı şekil: tek çekirdek, terminalde çalışan bir CLI + diğer arayüzlerin bağlandığı bir sunucu modu. Web arayüzü (`frontend/`) silinmedi, `kmc serve`'e bağlanan opsiyonel ilk istemci oldu |
 | Backend dili | Node.js + TypeScript (Rust değil) | Sahibi TS biliyor; Rust'a geçiş ileride, sandbox/exec katmanı netleştiğinde düşünülecek (Codex CLI de aynı sırayla gitti: önce TS, sonra kritik kısmı Rust'a taşıdı) |
 | LLM sağlayıcısı | OpenRouter üzerinden Qwen3.8 Max (Anthropic değil) | Maliyet — Anthropic'e göre input aynı, output ~%40 ucuz; ayrıca provider-agnostic mimari hedefi (OpenAI-uyumlu `chat.completions` formatı kullanılıyor, `MODEL` env değişkeniyle model değişimi kod değişikliği gerektirmiyor) |
 | Frontend state yönetimi | Basit bir `useAgentSocket` hook'u (RTK Query değil, henüz) | v0'da RTK/Zustand kararı bilinçli olarak ertelendi, gerçek kullanımdan sonra karar verilecek |
@@ -55,18 +56,26 @@ agent mimarisini bu proje üzerinden öğrenerek ilerliyor. Yaklaşım: küçük
 - Manuel testte bulunan `run_command` ile workspace dışına çıkma açığı
   (`cat ../../backend/.env`) sınıflandırıcıyla kapatıldı; tam bu komutlar
   için regresyon testi var. Symlink kaçışı hâlâ açık (spec.md §6).
-- `cd backend && npm test` sınıflandırıcı testlerini çalıştırır.
+- `cd backend && npm test` sınıflandırıcı, CLI argüman ve terminal render
+  testlerini çalıştırır.
+- CLI her klasörden çalışabilir: `.env`, varsayılan workspace ve decision
+  log her zaman `backend/`'e göre çözülür (`src/paths.ts`), çalıştırılan
+  klasöre göre değil. Başka bir klasörde çalışmak bilinçli bir tercih
+  olarak `--workspace <dir>` ile verilir; varsayılan hâlâ güvenli toy
+  workspace.
 - Her karar `backend/logs/tool-decisions.jsonl`'a yazılıyor (gitignored,
   hassas metin içerebilir) — Seviye 2 modelin gelecekteki eğitim verisi.
 - **Konuşma hafızası yok** — her `user_message`, `agent-loop.ts` içinde
   sıfırdan bir mesaj listesiyle başlıyor, önceki turu hatırlamıyor. Bu şu
-  an bilinen en büyük eksik.
+  an bilinen en büyük eksik; interaktif CLI oturumunda da böyle.
 - Codebase keşif tool'u yok (glob/grep gibi) — agent sadece kendisine
   verilen dosya adını okuyabiliyor, "projede ne var" diye bakamıyor
-- Backend, WebSocket üzerinden (`ws://localhost:8787`) frontend'e event
-  stream'i gönderiyor (`connected`, `turn_start`, `assistant_text`,
-  `tool_call` (sınıflandırıcı kararıyla birlikte), `tool_blocked`,
-  `tool_result`, `tool_error`, `turn_end`)
+- Agent loop bir event stream üretiyor (`connected`, `turn_start`,
+  `assistant_text`, `tool_call` (sınıflandırıcı kararıyla birlikte),
+  `tool_blocked`, `tool_result`, `tool_error`, `turn_end`). CLI bunu
+  terminalde render ediyor (`src/render.ts`), `kmc serve` aynı stream'i
+  WebSocket üzerinden istemcilere gönderiyor. Sunucu sadece `127.0.0.1`'e
+  bağlanıyor (ağdan erişilemez); Origin kontrolü henüz yok (spec.md §6).
 
 ## Konuşulan ama henüz karara bağlanmayan seçenekler
 

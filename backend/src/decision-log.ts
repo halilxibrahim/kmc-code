@@ -1,11 +1,12 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { ToolCallContext, Verdict } from './classifier.js'
+import { fromBackend } from './paths.js'
 
 // Every classifier decision is appended here as JSONL. This is the future
 // training set for a Level 2 (fine-tuned) classifier — see spec.md §8.
 // Gitignored: task/plan/command text can contain sensitive data (spec.md C6).
-const LOG_FILE = path.resolve(process.env.DECISION_LOG ?? './logs/tool-decisions.jsonl')
+const LOG_FILE = fromBackend(process.env.DECISION_LOG ?? 'logs/tool-decisions.jsonl')
 
 export async function logDecision(ctx: ToolCallContext, verdict: Verdict) {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...ctx, verdict }) + '\n'

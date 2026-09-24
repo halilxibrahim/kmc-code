@@ -13,7 +13,7 @@ export interface LogEntry {
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
-const BACKEND_WS_URL = import.meta.env.VITE_BACKEND_WS_URL ?? 'ws://localhost:8787'
+const BACKEND_WS_URL = import.meta.env.VITE_BACKEND_WS_URL ?? 'ws://127.0.0.1:8787'
 
 // v0: basit bir hook. RTK Query / Zustand gibi bir state yönetimine
 // geçip geçmeyeceğimize gerçek kullanımdan sonra karar veriyoruz (spec.md).

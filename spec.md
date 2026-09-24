@@ -163,6 +163,16 @@ noted here:
       and command text locally; it is gitignored but not redacted.)*
 - [ ] (If C8 is enabled) Can the pairing code be brute-forced — how many
       attempts, how long would it take?
+- [x] **`kmc serve` reachable from the network** — the WebSocket server
+      used to listen on all interfaces, so another device on the same
+      network could drive the agent. It now binds to `127.0.0.1` only;
+      verified that a connection via the machine's network address is
+      refused.
+- [ ] **Cross-site WebSocket hijacking** — still open. `kmc serve` does
+      not check the `Origin` header, so any web page open in the local
+      browser can connect to `ws://127.0.0.1:8787` and send tasks. The §8
+      classifier still applies to what such a task can do, but the
+      connection itself should be refused. Also a prerequisite for C8.
 - [ ] Is there any control against dependency-confusion / typosquatting
       attacks during dependency installation?
 - [ ] Can the sandbox process consume unlimited host CPU/memory/disk
@@ -184,7 +194,9 @@ Cherny's "do the simplest thing first" principle — it is still early):
   something simpler — plain process isolation?)
 - What language will the backend be written in?
 - Single machine, or a harness/UI split with multiple clients, as in
-  Silo?
+  Silo? *(Partial answer: the CLI is the core, and `kmc serve` exposes it
+  to local clients such as the web UI. Remote clients (C8) remain out of
+  scope until pairing/authentication exists.)*
 - Network policy: fully closed by default, or an allow-list defined from
   the start? *(Interim answer at the command level: the §8 classifier
   blocks known network commands unless `AGENT_ALLOW_NETWORK=true`. This
@@ -273,7 +285,7 @@ classifyToolCall({ task, plan, tool, input }) → {
 A blocked call is never executed. The model receives the reasons as the
 tool result, and its system prompt tells it not to retry the same call
 but to find an in-workspace alternative or explain why it cannot
-proceed. The frontend shows these as `BLOCK` events.
+proceed. Both the CLI and the web client show these as `BLOCK` events.
 
 Level 0 treats as `unknown` — and therefore blocks — anything whose
 effect it cannot see in the command line: variable expansion and

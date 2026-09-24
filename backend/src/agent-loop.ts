@@ -78,7 +78,8 @@ export async function runAgentTurn(userMessage: string, emit: AgentEventEmitter)
 
       const ctx = { task: userMessage, plan: message.content ?? '', tool: name, input }
       const verdict = classifyToolCall(ctx)
-      void logDecision(ctx, verdict)
+      // Awaited: fire-and-forget lost entries on exit and wrote them out of order.
+      await logDecision(ctx, verdict)
 
       emit({ type: 'tool_call', name, input, verdict })
 

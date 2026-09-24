@@ -18,7 +18,12 @@ as far as real usage justifies.
 
 ## What it does today
 
-- Chat with an LLM agent over a WebSocket connection
+- **CLI first:** `kmc` in a terminal. Chat interactively, or run a single
+  task with `kmc "fix the failing test"`
+- **`kmc serve`** exposes the same agent over a local WebSocket, so other
+  interfaces sit on top of the CLI instead of replacing it. The web UI in
+  `frontend/` is the first such client; desktop or IDE clients would
+  follow the same path
 - The agent can call three tools: `read_file`, `write_file`, `run_command`
 - All tool calls are scoped to a single workspace directory
 - **Pre-execution classifier** — inspired by TypeSafe AI's
@@ -32,19 +37,19 @@ as far as real usage justifies.
 - LLM calls go through an OpenAI-compatible client to
   [OpenRouter](https://openrouter.ai), defaulting to `qwen/qwen3.8-max` —
   swappable via one environment variable, not locked to a single provider
-- A terminal-style console UI streams every event (`tool_call`,
-  `tool_result`, `tool_error`, ...) in real time
+- Every event (`tool_call`, `tool_blocked`, `tool_result`, ...) streams
+  in real time, both in the terminal and to `kmc serve` clients
 
 ## Current architecture
 
 ```mermaid
 flowchart LR
-    subgraph Client["frontend — React + Vite"]
-        UI["Agent Console UI"]
-    end
+    Terminal["terminal\nkmc · kmc &quot;task&quot;"]
+    Web["web UI (frontend/)\noptional client"]
 
-    subgraph Server["backend — Node.js + TypeScript"]
-        WS["WebSocket server"]
+    subgraph Core["kmc — Node.js + TypeScript (backend/)"]
+        CLI["CLI\n(interactive / one-shot)"]
+        WS["kmc serve\nWebSocket, 127.0.0.1 only"]
         Loop["Agent loop\n(tool-use, single turn, no memory)"]
         Guard{"Pre-execution classifier\n(rules-v0)"}
         Tools["Tools\nread_file · write_file · run_command"]
@@ -54,7 +59,9 @@ flowchart LR
     Workspace[("backend/workspace/\n(no sandbox — guardrails only)")]
     Provider[["OpenRouter\n(qwen/qwen3.8-max)"]]
 
-    UI <-- "ws://localhost:8787" --> WS
+    Terminal --> CLI
+    Web <-- "ws://127.0.0.1:8787" --> WS
+    CLI --> Loop
     WS --> Loop
     Loop <-- "OpenAI-compatible API" --> Provider
     Loop -- "task + plan + tool call" --> Guard
@@ -64,34 +71,53 @@ flowchart LR
     Tools --> Workspace
 ```
 
+The agent loop is the core; the CLI and `kmc serve` are two thin ways
+into it. This is the same shape Claude Code and Codex use: one core that
+runs in a terminal, plus a server mode that other interfaces connect to.
+
 Each user message starts a fresh agent loop — there is no conversation
-memory between turns yet, and the agent has no way to explore the project
-beyond a file path you give it directly.
+memory between turns yet (even inside one interactive session), and the
+agent has no way to explore the project beyond a file path you give it
+directly.
 
 ## Tech stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, Radix primitives | Author's existing frontend expertise; state library (Redux Toolkit vs. Zustand vs. plain hooks) deliberately undecided until real usage informs it |
-| Backend | Node.js, TypeScript | Same language across the stack while learning agent/backend architecture; a move to Rust for the sandbox/exec layer is a deliberate future step, not a starting point |
+| Primary interface | CLI (`kmc`), no framework — Node's `readline` and `util.styleText` | The CLI is the skeleton; other interfaces are clients of `kmc serve`, so they don't each re-implement the agent |
+| Core | Node.js, TypeScript | Same language across the stack while learning agent architecture; a move to Rust for the sandbox/exec layer is a deliberate future step, not a starting point |
 | LLM access | OpenAI SDK against OpenRouter | Provider-agnostic by design — swapping models or providers is a config change, not a rewrite |
-| Transport | Raw WebSocket (`ws`) | Agent output needs to stream both ways (interruptible), which a plain request/response API doesn't fit well |
+| Client protocol | WebSocket (`ws`), loopback only, `kmc serve` | Agent output streams both ways (interruptible), which plain request/response doesn't fit well |
+| Web client | React 19, TypeScript, Vite, Tailwind CSS v4, Radix primitives | Author's existing frontend expertise; optional, not required to use the agent |
 
 ## Getting started
 
 ```bash
-# Backend
 cd backend
-cp .env.example .env   # fill in OPENROUTER_API_KEY
+cp .env.example .env    # fill in OPENROUTER_API_KEY
 npm install
-npm run dev             # ws://localhost:8787
-npm test                # classifier test suite
+npm run build
+npm link                # installs the `kmc` command
 
-# Frontend (separate terminal)
-cd frontend
-npm install
-npm run dev              # http://localhost:5173
+kmc                      # interactive session
+kmc "list the files"     # one task, then exit
+kmc --workspace ../my-app   # work somewhere else — no sandbox, your call
+kmc --help
 ```
+
+`kmc` works from any directory: `.env`, the default workspace
+(`backend/workspace/`) and the decision log are always resolved from
+`backend/`, never from where you run it.
+
+Optional web client:
+
+```bash
+kmc serve                # ws://127.0.0.1:8787 — in one terminal
+cd frontend && npm install && npm run dev   # http://localhost:5173 — in another
+```
+
+Development: `npm run dev` (CLI without building), `npm run serve`
+(server with reload), `npm test` (classifier, CLI and rendering tests).
 
 ## Roadmap / target architecture
 
@@ -108,12 +134,12 @@ The next steps under consideration, roughly in priority order:
 
 ```mermaid
 flowchart LR
-    subgraph Client["frontend"]
-        UI["Agent Console UI"]
+    subgraph Client["clients"]
+        UI["CLI · web · desktop / IDE (later)"]
     end
 
-    subgraph Server["backend"]
-        WS["WebSocket server\n+ session memory"]
+    subgraph Server["kmc core"]
+        WS["CLI + kmc serve\n+ session memory"]
         Loop["Agent loop"]
         subgraph ToolLayer["Tool layer"]
             RW["read_file · write_file · run_command"]
@@ -161,8 +187,8 @@ in [`CLAUDE.md`](./CLAUDE.md).
 
 ```
 .
-├── frontend/     React + Vite console UI
-├── backend/      Node.js WebSocket server + agent loop
+├── backend/      the kmc CLI: agent loop, classifier, `kmc serve`
+├── frontend/     optional web client for `kmc serve` (React + Vite)
 ├── spec.md       Security/trust architecture spec
 └── CLAUDE.md     Project memory — decisions, rationale, current state
 ```
