@@ -29,8 +29,19 @@ export interface ToolCallContext {
 }
 
 export interface ClassifierOptions {
+  // Boundary: anything outside it is "outside_workspace".
   workspaceDir?: string
+  // Where relative paths are resolved from; may be a subdirectory of workspaceDir.
+  cwd?: string
+  // Extra directories that count as inside (e.g. a host's scratch dir).
+  extraRoots?: string[]
   allowNetwork?: boolean
+}
+
+interface PathEnv {
+  workspaceDir: string
+  cwd: string
+  extraRoots: string[]
 }
 
 interface Findings {
@@ -86,22 +97,24 @@ function widenScope(f: Findings, scope: Scope, reason: string) {
   f.reasons.push(reason)
 }
 
-function pathScope(token: string, workspaceDir: string): Scope {
+function pathScope(token: string, env: PathEnv): Scope {
   if (SAFE_DEVICES.has(token)) return 'workspace'
   if (token.startsWith('~')) return 'outside_workspace'
-  return isInside(workspaceDir, path.resolve(workspaceDir, token)) ? 'workspace' : 'outside_workspace'
+  const resolved = path.resolve(env.cwd, token)
+  const roots = [env.workspaceDir, ...env.extraRoots]
+  return roots.some((root) => isInside(root, resolved)) ? 'workspace' : 'outside_workspace'
 }
 
 function looksLikePath(token: string): boolean {
   return token.includes('/') || token === '..' || token.startsWith('~')
 }
 
-function checkPathToken(f: Findings, token: string, workspaceDir: string) {
+function checkPathToken(f: Findings, token: string, env: PathEnv) {
   const candidates = [token]
   const eq = token.indexOf('=')
   if (eq !== -1) candidates.push(token.slice(eq + 1)) // --out=../x, FOO=/etc/x
   for (const candidate of candidates) {
-    if (looksLikePath(candidate) && pathScope(candidate, workspaceDir) === 'outside_workspace') {
+    if (looksLikePath(candidate) && pathScope(candidate, env) === 'outside_workspace') {
       widenScope(f, 'outside_workspace', `path outside workspace: ${candidate}`)
     }
   }
@@ -212,7 +225,7 @@ function analyzeSegment(f: Findings, tokens: string[]) {
   }
 }
 
-function analyzeCommand(command: string, workspaceDir: string): Findings {
+function analyzeCommand(command: string, env: PathEnv): Findings {
   const f = emptyFindings()
 
   if (!command.trim()) {
@@ -233,13 +246,13 @@ function analyzeCommand(command: string, workspaceDir: string): Findings {
     const entry = entries[i]
 
     if (typeof entry === 'string') {
-      checkPathToken(f, entry, workspaceDir)
+      checkPathToken(f, entry, env)
       segment.push(entry)
       continue
     }
     if ('comment' in entry) continue
     if (entry.op === 'glob') {
-      checkPathToken(f, entry.pattern, workspaceDir)
+      checkPathToken(f, entry.pattern, env)
       segment.push(entry.pattern)
       continue
     }
@@ -277,7 +290,12 @@ function decide(f: Findings, allowNetwork: boolean): Verdict['decision'] {
 }
 
 export function classifyToolCall(ctx: ToolCallContext, options: ClassifierOptions = {}): Verdict {
-  const workspaceDir = options.workspaceDir ?? WORKSPACE_DIR
+  const workspaceDir = path.resolve(options.workspaceDir ?? WORKSPACE_DIR)
+  const env: PathEnv = {
+    workspaceDir,
+    cwd: path.resolve(options.cwd ?? workspaceDir),
+    extraRoots: (options.extraRoots ?? []).map((root) => path.resolve(root)),
+  }
   const allowNetwork = options.allowNetwork ?? process.env.AGENT_ALLOW_NETWORK === 'true'
 
   let f: Findings
@@ -285,7 +303,7 @@ export function classifyToolCall(ctx: ToolCallContext, options: ClassifierOption
     case 'run_command': {
       const command = ctx.input.command
       f = typeof command === 'string'
-        ? analyzeCommand(command, workspaceDir)
+        ? analyzeCommand(command, env)
         : { ...emptyFindings(), scope: 'unknown', reasons: ['missing command'] }
       break
     }
@@ -295,7 +313,7 @@ export function classifyToolCall(ctx: ToolCallContext, options: ClassifierOption
       const target = ctx.input.path
       if (typeof target !== 'string' || !target) {
         widenScope(f, 'unknown', 'missing path')
-      } else if (pathScope(target, workspaceDir) !== 'workspace') {
+      } else if (pathScope(target, env) !== 'workspace') {
         widenScope(f, 'outside_workspace', `path outside workspace: ${target}`)
       }
       if (ctx.tool === 'write_file') {
